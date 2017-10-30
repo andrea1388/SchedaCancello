@@ -39,7 +39,7 @@
 #include "DHT.h"
 #include "Antirimbalzo.h"
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
  #define DEBUG_PRINT(x, ...)  Serial.print (x, ##__VA_ARGS__)
  #define DEBUG_PRINTLN(x, ...)  Serial.println (x, ##__VA_ARGS__)
@@ -79,8 +79,8 @@ void setup() {
  digitalWrite(TXENABLE, LOW);
  dht.setup(5,DHT::DHT22);
  swApricancello.cbClickCorto=PulsanteApricancelloClick;
- pir.cbClickCorto=pirAttivato;
- pir.tPeriodoBlackOut=6000;
+ pir.cbInizioStatoOn=pirAttivato;
+ //pir.tPeriodoBlackOut=6000;
  DEBUG_PRINTLN("ok");    
 }
 
@@ -90,7 +90,7 @@ void loop() {
 		ElaboraLetturaCard();
 	}
   swApricancello.Elabora(digitalRead(PULSANTE)==LOW);
-  pir.Elabora(digitalRead(PIR)==LOW);
+  pir.Elabora(digitalRead(PIR)==HIGH);
   if(Serial.available()) ProcessaDatiSeriali();
   if( (millis() - tiniziomemorizzazionetag) > 20000) memorizzaprossimotag=false;
   if( (millis() - tultimaletturatemp) > 60000) {
