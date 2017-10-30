@@ -39,7 +39,7 @@
 #include "DHT.h"
 #include "Antirimbalzo.h"
 
-//#define DEBUG
+#define DEBUG
 #ifdef DEBUG
  #define DEBUG_PRINT(x, ...)  Serial.print (x, ##__VA_ARGS__)
  #define DEBUG_PRINTLN(x, ...)  Serial.println (x, ##__VA_ARGS__)
@@ -59,6 +59,7 @@ constexpr uint8_t SS_PIN = 10;         // Configurable, see typical pin layout a
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance
 Antirimbalzo swApricancello;
+Antirimbalzo pir;
 // se attivato il prossimo tag ricevuto viene memorizzato in eeprom 
 bool memorizzaprossimotag=false;
 
@@ -78,6 +79,8 @@ void setup() {
  digitalWrite(TXENABLE, LOW);
  dht.setup(5,DHT::DHT22);
  swApricancello.cbClickCorto=PulsanteApricancelloClick;
+ pir.cbClickCorto=pirAttivato;
+ pir.tPeriodoBlackOut=6000;
  DEBUG_PRINTLN("ok");    
 }
 
@@ -87,7 +90,7 @@ void loop() {
 		ElaboraLetturaCard();
 	}
   swApricancello.Elabora(digitalRead(PULSANTE)==LOW);
-  ElaboraPir();
+  pir.Elabora(digitalRead(PIR)==LOW);
   if(Serial.available()) ProcessaDatiSeriali();
   if( (millis() - tiniziomemorizzazionetag) > 20000) memorizzaprossimotag=false;
   if( (millis() - tultimaletturatemp) > 60000) {
@@ -96,7 +99,7 @@ void loop() {
     uint32_t tmp=dht.Rtemperature;
     DEBUG_PRINT("temp="); 
     DEBUG_PRINT(tmp); 
-    byte uu[4];
+    char uu[4];
     uu[0]=tmp & 0xff;
     uu[1]=tmp >> 8;
     tmp=dht.Rhumidity;
@@ -126,40 +129,15 @@ void ElaboraLetturaCard() {
 }
   
 
-void ElaboraPir() {
-  static unsigned long inizio_blackout=0, durata_pressione_pulsante=0,inizio_pressione_pulsante=0;
-  static bool first=true;
-  static byte st[10],k=0;
-  unsigned long now=millis();
-  if(digitalRead(PIR)==LOW) st[k++]=1; else st[k++]=0;
-  if(k==10) k=0;
-  int s=0;
-  for(int w=0;w<10;w++) s+=st[w];
-  if(s>8) {
-    if((now-inizio_blackout) > TBLACKOUTPIR) {
-      if(first==true) {
-        durata_pressione_pulsante=0;
-        inizio_pressione_pulsante=now; 
-        first=false;
-      } else {
-        durata_pressione_pulsante=now-inizio_pressione_pulsante;
-      }
-    }
-  } else {
-    if(durata_pressione_pulsante>0) {
-      DEBUG_PRINTLN("pir");
-      Tx('B',0,0);
-      first=true;
-      inizio_blackout=now;
-    }
-    durata_pressione_pulsante=0;
-  }
+void pirAttivato() {
+  DEBUG_PRINTLN("pir");
+  Tx('B',0,0);
 }
 
 
 void PulsanteApricancelloClick() {
+  DEBUG_PRINTLN("puls");
   Tx('C',0,0);
-  DEBUG_PRINTLN("Pulscliccort");
 }
 
 #define A 0
@@ -186,7 +164,7 @@ void ProcessaDatiSeriali() {
     sum+=c;
     lunghezza=c;
     prossimodato=D; 
-    if(lunghezza>6) prossimodato==A;
+    if(lunghezza>6) prossimodato=A;
     if(lunghezza==0) {
       prossimodato=S;
     }
@@ -274,7 +252,7 @@ bool EsisteCorrispondenza(byte* uidByte) {
 //Formato:
 //A<comando><lunghezza parametri><parametri>
 
-void Tx(char cmd, byte len, char* b) {
+void Tx(char cmd, byte len, const char* b) {
   byte sum=(byte)cmd+len;
   for(byte r=0;r<len;r++) sum+=b[r];
   digitalWrite(TXENABLE, HIGH);
