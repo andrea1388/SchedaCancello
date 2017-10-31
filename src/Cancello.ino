@@ -38,6 +38,7 @@
 #include <MFRC522.h>
 #include "DHT.h"
 #include "Antirimbalzo.h"
+#include "Proto485.h"
 
 //#define DEBUG
 #ifdef DEBUG
@@ -53,6 +54,7 @@
 #define PULSANTE 4
 #define PIR 3
 #define TXENABLE 2
+#define INTERVALLORITRASMISSIONTAG 1000
 
 constexpr uint8_t RST_PIN = 9;          // Configurable, see typical pin layout above
 constexpr uint8_t SS_PIN = 10;         // Configurable, see typical pin layout above
@@ -65,6 +67,8 @@ bool memorizzaprossimotag=false;
 
 volatile unsigned long int tiniziomemorizzazionetag,tultimaletturatemp;
 DHT dht;
+Proto485 comm(TXENABLE);
+
 
 void setup() {
 	Serial.begin(9600);		// Initialize serial communications with the PC
@@ -74,15 +78,17 @@ void setup() {
   // aumenta la potenza
   mfrc522.PCD_SetRegisterBitMask(mfrc522.RFCfgReg, (0x07<<4));
 	//Serial.println(F("Scan PICC to see UID, SAK, type, and data blocks..."));
- pinMode(TXENABLE, OUTPUT);
- pinMode(PULSANTE, INPUT_PULLUP);
- digitalWrite(TXENABLE, LOW);
- dht.setup(5,DHT::DHT22);
- swApricancello.cbClickCorto=PulsanteApricancelloClick;
- pir.cbInizioStatoOn=pirAttivato;
- //pir.tPeriodoBlackOut=6000;
- DEBUG_PRINTLN("ok");    
+  pinMode(TXENABLE, OUTPUT);
+  pinMode(PULSANTE, INPUT_PULLUP);
+  digitalWrite(TXENABLE, LOW);
+  dht.setup(5,DHT::DHT22);
+  swApricancello.cbInizioStatoOn=PulsanteApricancelloClick;
+  pir.cbInizioStatoOn=pirAttivato;
+  //pir.tPeriodoBlackOut=6000;
+  DEBUG_PRINTLN("ok");    
+  comm.cbElaboraComando=ElaboraComando;
 }
+
 
 void loop() {
 
@@ -91,7 +97,7 @@ void loop() {
 	}
   swApricancello.Elabora(digitalRead(PULSANTE)==LOW);
   pir.Elabora(digitalRead(PIR)==HIGH);
-  if(Serial.available()) ProcessaDatiSeriali();
+  if(Serial.available()) comm.ProcessaDatiSeriali(Serial.read());
   if( (millis() - tiniziomemorizzazionetag) > 20000) memorizzaprossimotag=false;
   if( (millis() - tultimaletturatemp) > 60000) {
     tultimaletturatemp=millis();
@@ -107,13 +113,15 @@ void loop() {
     DEBUG_PRINTLN(tmp); 
     uu[2]=tmp & 0xff;
     uu[3]=tmp >> 8;
-    Tx('I',4,uu);
+    comm.Tx('I',4,uu);
   }
   
 
 }
 
 void ElaboraLetturaCard() {
+  static long int tultimoriconoscimento;
+  if(!memorizzaprossimotag && ( (millis()-tultimoriconoscimento) < INTERVALLORITRASMISSIONTAG)) return;
   if ( ! mfrc522.PICC_ReadCardSerial()) return;
   //mfrc522.PICC_DumpDetailsToSerial(&(mfrc522.uid));
   DEBUG_PRINT("letto tag: ");
@@ -125,69 +133,20 @@ void ElaboraLetturaCard() {
     memorizzaCardNumber(mfrc522.uid.uidByte);
     return;
   }
-  if(EsisteCorrispondenza(mfrc522.uid.uidByte)) Tx('T',4,mfrc522.uid.uidByte);
+  tultimoriconoscimento=millis();
+  if(EsisteCorrispondenza(mfrc522.uid.uidByte)) comm.Tx('T',4,mfrc522.uid.uidByte);
 }
   
 
 void pirAttivato() {
   DEBUG_PRINTLN("pir");
-  Tx('B',0,0);
+  comm.Tx('B',0,0);
 }
 
 
 void PulsanteApricancelloClick() {
   DEBUG_PRINTLN("puls");
-  Tx('C',0,0);
-}
-
-#define A 0
-#define L 1
-#define D 2
-#define C 3
-#define S 4
-
-void ProcessaDatiSeriali() {
-  static byte numerobytesricevuti=0,bytesricevuti[6],prossimodato=A,lunghezza,comando,sum;
-  static unsigned long tultimodatoricevuto;
-  char c=Serial.read();
-  /*
-  DEBUG_PRINT("c=");
-  DEBUG_PRINT(c,HEX);
-  DEBUG_PRINT(" prox=");
-  DEBUG_PRINTLN(prossimodato);
-  */
-  if(millis()-tultimodatoricevuto > 300) {prossimodato=A; };
-  tultimodatoricevuto=millis();
-  if(prossimodato==A && c=='A') {prossimodato=C; numerobytesricevuti=0; return;}
-  if(prossimodato==C) {comando=c; prossimodato=L; sum=c; return;}
-  if(prossimodato==L) {
-    sum+=c;
-    lunghezza=c;
-    prossimodato=D; 
-    if(lunghezza>6) prossimodato=A;
-    if(lunghezza==0) {
-      prossimodato=S;
-    }
-    /*
-    DEBUG_PRINT("next D");
-    DEBUG_PRINT(" l=");
-    DEBUG_PRINTLN(lunghezza);
-    */
-    return;
-  }
-  if(prossimodato==D) {
-    sum+=c;
-    bytesricevuti[numerobytesricevuti++]=c;
-    if(numerobytesricevuti==lunghezza) prossimodato=S;
-    return;
-  }
-  if(prossimodato==S) {
-    if(c==sum) {
-      ElaboraComando(comando,bytesricevuti,lunghezza);
-      prossimodato=A;
-      //DEBUG_PRINTLN("next A");
-    }
-  }
+  comm.Tx('C',0,0);
 }
 
 void ElaboraComando(byte comando,byte *bytesricevuti,byte len) {
@@ -199,7 +158,7 @@ void ElaboraComando(byte comando,byte *bytesricevuti,byte len) {
       break;
     case 'H':
       //ping
-      Tx('G',1,"D");
+      comm.Tx('G',1,"D");
       break;
       
   }
@@ -249,20 +208,6 @@ bool EsisteCorrispondenza(byte* uidByte) {
   return false;
 }
 
-//Formato:
-//A<comando><lunghezza parametri><parametri>
 
-void Tx(char cmd, byte len, const char* b) {
-  byte sum=(byte)cmd+len;
-  for(byte r=0;r<len;r++) sum+=b[r];
-  digitalWrite(TXENABLE, HIGH);
-  Serial.write('A');
-  Serial.write(cmd);
-  Serial.write(len);
-  if(len>0) Serial.write(b,len);
-  Serial.write(sum);
-  while (!(UCSR0A & _BV(TXC0)));
-  digitalWrite(TXENABLE, LOW);
-}
 
 
