@@ -67,7 +67,7 @@ bool memorizzaprossimotag=false;
 
 volatile unsigned long int tiniziomemorizzazionetag,tultimaletturatemp;
 DHT dht;
-Proto485 comm(TXENABLE);
+Proto485 comm(&Serial,TXENABLE,true);
 
 
 void setup() {
